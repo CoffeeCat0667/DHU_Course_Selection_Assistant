@@ -1,10 +1,18 @@
 # DHU 选课辅助工具
 
+[![Stars](https://img.shields.io/github/stars/CoffeeCat0667/DHU_Course_Selection_Assistant?style=flat-square&logo=github&label=Stars)](https://github.com/CoffeeCat0667/DHU_Course_Selection_Assistant/stargazers)
+[![Last Commit](https://img.shields.io/github/last-commit/CoffeeCat0667/DHU_Course_Selection_Assistant?style=flat-square&label=Last%20Commit)](https://github.com/CoffeeCat0667/DHU_Course_Selection_Assistant/commits/main)
+[![Issues](https://img.shields.io/github/issues/CoffeeCat0667/DHU_Course_Selection_Assistant?style=flat-square&label=Issues)](https://github.com/CoffeeCat0667/DHU_Course_Selection_Assistant/issues)
+[![Repo Size](https://img.shields.io/github/repo-size/CoffeeCat0667/DHU_Course_Selection_Assistant?style=flat-square&label=Size)](https://github.com/CoffeeCat0667/DHU_Course_Selection_Assistant)
+
+[![Python](https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?style=flat-square&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6%206-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](https://opensource.org/license/mit)
+
 东华大学（DHU）选课系统的 Windows 桌面辅助工具。
 
 **Ver3.0** 已重构为单进程 PySide6 桌面应用：不再需要 Web 面板，也不再需要 Tkinter 配置器。
-
-> ⚠️ **免责声明**：本项目仅供个人学习与技术研究使用。请遵守学校相关规章制度，不要用于任何违规用途。使用本工具产生的一切后果由使用者自行承担。
 
 ---
 
@@ -27,7 +35,7 @@
 
 - Windows 10 / 11
 - **Python 3.14**（开发环境为 3.14.8 64 位）
-- **Microsoft Edge**：用于完成学校 CAS 登录。驱动由 Selenium Manager 自动匹配下载，**无需手动安装 webdriver**
+- **Microsoft Edge**：用于完成学校 CAS 登录，驱动由 Selenium Manager 自动匹配下载，无需手动安装 webdriver
 - 能够访问 `jwgl.dhu.edu.cn` 的网络（校园网或学校 VPN）
 
 ---
@@ -79,8 +87,6 @@ copy config.example.json config.json
 | 2027-2028 春 | 89 |
 | …… | 每学期 +1 |
 
-> `config.json` 已被 `.gitignore` 排除，不会进入版本库。**请勿将含真实密码的配置文件上传到任何公开位置。**
-
 ---
 
 ## 使用
@@ -94,8 +100,6 @@ python main.py
 3. `Only_Submit` 模式每完成一轮会等待确认，点「继续下一轮」继续
 4. 随时可点「停止」中止
 
-> 程序启动后**不会自动抢课**，必须显式点击「开始抢课」。
-
 ---
 
 ## 项目结构
@@ -108,7 +112,7 @@ api.py          选课系统的 HTTP 调用
 parser.py       解析接口返回的 HTML 片段
 strategies.py   三种抢课模式的实现
 loader.py       读取 config.json
-config.json     本地配置（已忽略，不入库）
+config.json     本地配置文件
 ```
 
 ---
@@ -118,7 +122,7 @@ config.json     本地配置（已忽略，不入库）
 - 移除 Flask 与 Web 监控面板，监控界面改为 Qt 原生实现
 - 移除独立的 Tkinter 配置编辑器，配置界面并入 `main.py`
 - 三个进程合并为单进程单窗口，标签页切换「配置 / 监控」
-- 启动不再自动抢课，需显式点击「开始抢课」
+- 启动后需显式点击「开始抢课」才会运行
 - 登录失败改为进程内重试，最多 5 次，超过则阻塞等待人工处理
 - 界面使用 Qt 自带的 Windows 11 原生样式（浅色）
 
@@ -126,4 +130,4 @@ config.json     本地配置（已忽略，不入库）
 
 ## 许可证
 
-仅供学习交流使用。
+本项目基于 [MIT License](https://opensource.org/license/mit) 开源。
