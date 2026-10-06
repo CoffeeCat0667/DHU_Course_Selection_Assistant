@@ -1,0 +1,23 @@
+{
+  "username": "你的学号",
+  "password": "你的密码",
+  "term_id": 86,
+  "active_mode": "FQTS",
+  "loop_interval": 1.0,
+  "proxy": {
+    "enabled": false,
+    "host": "localhost",
+    "port": 8888
+  },
+  "tasks": [
+    {
+      "mode": "FQTS",
+      "main_id": "课程代码",
+      "target_ids": [
+        "目标教学班ID"
+      ],
+      "del_class_no": "",
+      "del_raw_id": ""
+    }
+  ]
+}

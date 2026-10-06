@@ -1,0 +1,31 @@
+# DHU 选课辅助工具 Ver3.0 —— 依赖清单
+# 目标环境：Python 3.14.8 (64-bit) / pip 26.2.1
+# 安装    ：python -m pip install -r requirements.txt
+# -----------------------------------------------------------------------------
+# 【Ver3.0 变更】移除 flask
+#   Web 监控面板（web_server.py / web_ui.html）将由原生 Qt 界面取代，
+#   不再需要 Flask + SSE。
+#   如需回退旧 Web 模式，请另行安装：flask==3.1.0
+#
+# 【旧版锁定值备查，便于回退】
+#   selenium==4.27.1   requests==2.32.3   flask==3.1.0
+#   beautifulsoup4==4.12.3   colorama==0.4.6
+# -----------------------------------------------------------------------------
+
+# --- 网络 / 协议层（沿用现有代码，零改动）---
+selenium>=4.50.0             # requires_python >=3.10；旧 pin 4.27.1 早于 3.14，勿沿用
+requests>=2.34.2             # requires_python >=3.10
+beautifulsoup4>=4.15.0
+colorama>=0.4.6
+
+# --- 原生 GUI（新增）---
+PySide6-Essentials>=6.11.2   # requires_python >=3.10,<3.15；LGPLv3，可闭源分发
+                             # 已含 QtCore/QtGui/QtWidgets/QtSvg/QtNetwork，本项目够用
+                             # 如日后需 QtWebEngine/QtCharts/QtMultimedia，再换 PySide6>=6.11.2
+
+# --- 可选：打包独立 exe ---
+# pyinstaller>=6.22.3        # requires_python >=3.8,<3.16
+
+# --- 禁止安装 ---
+# pyqtdarktheme   requires_python ">=3.7,<3.12"，与 Python 3.14 不兼容
+# PyQt6           GPLv3，闭源分发需向 Riverbank 购买商业授权；用 PySide6 替代
