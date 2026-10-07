@@ -62,3 +62,56 @@ def _post(url: str, headers: dict, data: str) -> dict:
     resp = requests.post(url, headers=headers, data=data, proxies=PROXIES, verify=False)
     _log(url, resp.text)
     return resp.json()
+
+
+def _post_form(url: str, headers: dict, data: dict) -> dict:
+    """POST 表单（字典）。必须丢弃硬编码的 Content-Length，交给 requests 重算。"""
+    h = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+    resp = requests.post(url, headers=h, data=data, proxies=PROXIES, verify=False)
+    _log(url, resp.text)
+    return resp.json()
+
+
+def fetch_ts_courses(stud_no: str, semester: str, headers: dict) -> dict:
+    """本学期选课对照表（推荐选读课程与学分的数据源）。"""
+    return _post_form(
+        'https://jwgl.dhu.edu.cn/dhu/selectcourse/initTSCourses',
+        headers,
+        {'studNo': stud_no, 'scSemester': semester, 'type': 'selectCourse'},
+    )
+
+
+def fetch_honor_courses(stud_no: str, semester: str, headers: dict) -> dict:
+    """荣誉课程列表。"""
+    return _post_form(
+        'https://jwgl.dhu.edu.cn/dhu/selectcourse/initHonorCourses',
+        headers,
+        {'studNo': stud_no, 'scSemester': semester},
+    )
+
+
+def fetch_course_classes(course_code: str, term_id: int, headers: dict) -> dict:
+    """某门课本学期的开课情况（所有教学班与上课时间）。
+
+    返回 {"content": "<table>...</table>", "success": true}；
+    课程本学期不开课时 content 为空字符串。
+    """
+    return _post_form(
+        'https://jwgl.dhu.edu.cn/dhu/PublicQuery/getCourseTimeTableInfo',
+        headers,
+        {'kcbh': course_code, 'termId': term_id},
+    )
+
+
+def fetch_selected_courses(headers: dict) -> dict:
+    """当前已选课程（「查看自己选课情况」页的数据源）。
+
+    返回 result.enrollCourses，每门含 courseCode / courseName / credit /
+    catetory / classNo / teachName / classTime1~4 / classRoom1~4 /
+    useWeek1~4 / conflict，以及 result.credits = [已选学分, 待筛选学分]。
+    """
+    return _post_form(
+        'https://jwgl.dhu.edu.cn/dhu/selectcourse/initSelCourses',
+        headers,
+        {},
+    )

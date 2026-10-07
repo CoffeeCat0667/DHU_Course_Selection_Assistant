@@ -19,6 +19,8 @@ _state = {
     "round": 0,
     "query_count": 0,
     "notify": "",            # 阻塞时给用户的通知文本
+    "selected": None,        # 选课页数据：{status, semester, courses, total_credit, ...}
+    "pending": None,         # 应读未读课程：{groups, count, total_credit}
     "logs": [],              # [{id, time, level, msg}]
 }
 
@@ -34,6 +36,8 @@ def reset(**kwargs):
             "round": 0,
             "query_count": 0,
             "notify": "",
+            "selected": None,
+            "pending": None,
             "logs": [],
         })
         _state.update(kwargs)
