@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 import api
+import llm
 import parser as p
 import state
 from auth import login
@@ -198,6 +199,24 @@ def semester_label(semester: str) -> str:
 # =============================================================================
 # 配置页：账号信息 + 代理设置
 # =============================================================================
+class LLMProbe(QObject):
+    """在后台线程探测 LLM 连通性并读取模型列表，结果通过信号回到主线程。"""
+
+    done = Signal(dict)
+
+    def __init__(self, base_url: str, api_key: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.api_key = api_key
+
+    def run(self) -> None:
+        try:
+            result = llm.list_models(self.base_url, self.api_key)
+            self.done.emit({"ok": True, **result})
+        except Exception as exc:
+            self.done.emit({"ok": False, "error": str(exc)})
+
+
 class ConfigPage(QWidget):
     dirty_changed = Signal(bool)
 
@@ -217,6 +236,7 @@ class ConfigPage(QWidget):
         body.addWidget(self._build_credentials(), 3)
         body.addWidget(self._build_proxy(), 2)
         root.addLayout(body)
+        root.addWidget(self._build_llm())
         root.addStretch(1)
 
     def _build_credentials(self) -> QGroupBox:
@@ -278,6 +298,104 @@ class ConfigPage(QWidget):
         form.addRow("端口", self.proxy_port)
         return box
 
+    def _build_llm(self) -> QGroupBox:
+        box = QGroupBox("LLM（选课 Agent）")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(14, 16, 14, 14)
+        v.setSpacing(10)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.llm_base_edit = QLineEdit()
+        self.llm_base_edit.setPlaceholderText("https://api.example.com（结尾的 /v1 可省略，会自动探测）")
+        self.llm_base_edit.setMinimumHeight(32)
+        self.llm_base_edit.textChanged.connect(self._mark_dirty)
+
+        self.llm_key_edit = QLineEdit()
+        self.llm_key_edit.setPlaceholderText("sk-...")
+        self.llm_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.llm_key_edit.setMinimumHeight(32)
+        self.llm_key_edit.textChanged.connect(self._mark_dirty)
+
+        form.addRow("baseURL", self.llm_base_edit)
+        form.addRow("API Key", self.llm_key_edit)
+        v.addLayout(form)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.llm_probe_btn = QPushButton("检测连通性并读取可用模型")
+        self.llm_probe_btn.setMinimumHeight(34)
+        self.llm_probe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.llm_probe_btn.clicked.connect(self._probe_llm)
+        row.addWidget(self.llm_probe_btn)
+
+        row.addWidget(QLabel("可用模型"))
+        self.llm_model_combo = QComboBox()
+        self.llm_model_combo.setMinimumHeight(32)
+        self.llm_model_combo.setMinimumWidth(240)
+        self.llm_model_combo.setEnabled(False)
+        self.llm_model_combo.currentIndexChanged.connect(self._on_model_changed)
+        row.addWidget(self.llm_model_combo, 1)
+
+        self.llm_status = _hint("未检测")
+        row.addWidget(self.llm_status)
+        v.addLayout(row)
+        return box
+
+    def _on_model_changed(self, _index: int) -> None:
+        self._mark_dirty()
+
+    def _probe_llm(self) -> None:
+        base_url = self.llm_base_edit.text().strip()
+        api_key = self.llm_key_edit.text().strip()
+        if not base_url:
+            QMessageBox.information(self, "提示", "请先填写 baseURL。")
+            return
+        if not api_key:
+            QMessageBox.information(self, "提示", "请先填写 API Key。")
+            return
+
+        self.llm_probe_btn.setEnabled(False)
+        self.llm_status.setText("检测中…")
+        _set_color(self.llm_status, STATUS_COLORS["running"])
+
+        self._llm_probe = LLMProbe(base_url, api_key)
+        self._llm_probe.done.connect(self._on_probe_done)
+        threading.Thread(target=self._llm_probe.run, daemon=True).start()
+
+    def _on_probe_done(self, result: dict) -> None:
+        self.llm_probe_btn.setEnabled(True)
+        if not result.get("ok"):
+            message = str(result.get("error", "未知错误"))
+            self.llm_status.setText("失败")
+            _set_color(self.llm_status, STATUS_COLORS["error"])
+            QMessageBox.warning(self, "检测失败", message)
+            return
+
+        models = list(result.get("models") or [])
+        resolved = str(result.get("base_url", ""))
+        if resolved and resolved != llm.normalize_base_url(self.llm_base_edit.text()):
+            # 回填探测到的真实 baseURL（含 /v1）
+            self.llm_base_edit.setText(resolved)
+
+        current = self.llm_model_combo.currentText()
+        self.llm_model_combo.blockSignals(True)
+        self.llm_model_combo.clear()
+        self.llm_model_combo.addItems(models)
+        if current in models:
+            # 原来选中的模型仍可用则保留，否则置空等用户重新选择
+            self.llm_model_combo.setCurrentText(current)
+        else:
+            self.llm_model_combo.setCurrentIndex(-1)
+        self.llm_model_combo.blockSignals(False)
+        self.llm_model_combo.setEnabled(True)
+
+        self.llm_status.setText(f"连通，{len(models)} 个模型")
+        _set_color(self.llm_status, STATUS_COLORS["success"])
+        self._mark_dirty()
+
     # ---------------- 脏标记 ----------------
     def _mark_dirty(self, *_args) -> None:
         if self._loading:
@@ -312,6 +430,18 @@ class ConfigPage(QWidget):
             self.proxy_enabled.setChecked(proxy.get("enabled", True))
             self.proxy_host.setText(proxy.get("host", "localhost"))
             self.proxy_port.setText(str(proxy.get("port", 8888)))
+            llm_cfg = data.get("llm") or {}
+            self.llm_base_edit.setText(llm_cfg.get("base_url", ""))
+            self.llm_key_edit.setText(llm_cfg.get("api_key", ""))
+            model = str(llm_cfg.get("model", "") or "")
+            self.llm_model_combo.blockSignals(True)
+            self.llm_model_combo.clear()
+            if model:
+                self.llm_model_combo.addItem(model)
+            self.llm_model_combo.setCurrentText(model)
+            self.llm_model_combo.blockSignals(False)
+            self.llm_model_combo.setEnabled(bool(model))
+            self.llm_status.setText("已保存模型，可重新检测" if model else "未检测")
         finally:
             self._loading = False
         self._update_term_hint()
@@ -328,6 +458,14 @@ class ConfigPage(QWidget):
                 "host": self.proxy_host.text().strip(),
                 "port": int(self.proxy_port.text().strip() or 8888),
             },
+            "llm": self.llm_values(),
+        }
+
+    def llm_values(self) -> dict:
+        return {
+            "base_url": self.llm_base_edit.text().strip(),
+            "api_key": self.llm_key_edit.text(),
+            "model": self.llm_model_combo.currentText().strip(),
         }
 
 
@@ -723,8 +861,10 @@ class CoursePage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self._agent_state = None
         self._build()
         self.update_from_state(state.get_state())
+        self.set_agent_config("", "", "")
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
@@ -788,6 +928,67 @@ class CoursePage(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         v.addWidget(self.table)
         root.addWidget(box, 1)
+
+        root.addWidget(self._build_agent())
+
+    def _build_agent(self) -> QGroupBox:
+        box = QGroupBox("选课 Agent")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(14, 16, 14, 14)
+        v.setSpacing(8)
+
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        self.agent_status = _hint("")
+        head.addWidget(self.agent_status, 1)
+        self.agent_model_label = _hint("")
+        head.addWidget(self.agent_model_label)
+        v.addLayout(head)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.agent_input = QLineEdit()
+        self.agent_input.setMinimumHeight(32)
+        self.agent_input.setPlaceholderText("描述你想选的课（Agent 核心功能待实现）")
+        row.addWidget(self.agent_input, 1)
+        self.agent_run_btn = QPushButton("开始分析")
+        self.agent_run_btn.setMinimumHeight(34)
+        self.agent_run_btn.setMinimumWidth(120)
+        self.agent_run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(self.agent_run_btn)
+        v.addLayout(row)
+
+        self.agent_log = QListWidget()
+        self.agent_log.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.agent_log.setMaximumHeight(90)
+        v.addWidget(self.agent_log)
+        return box
+
+    def set_agent_config(self, base_url: str, api_key: str, model: str) -> None:
+        """按 LLM 配置的完整程度启用/禁用 Agent。"""
+        ready = bool(base_url and api_key and model)
+        signature = (ready, base_url, api_key, model)
+        if signature == self._agent_state:
+            return
+        self._agent_state = signature
+        self.agent_input.setEnabled(ready)
+        self.agent_run_btn.setEnabled(ready)
+        if ready:
+            self.agent_status.setText("已就绪")
+            _set_color(self.agent_status, STATUS_COLORS["success"])
+            self.agent_model_label.setText(f"模型：{model}")
+        else:
+            missing = []
+            if not base_url:
+                missing.append("baseURL")
+            if not api_key:
+                missing.append("API Key")
+            if not model:
+                missing.append("模型")
+            self.agent_status.setText(
+                "Agent 已禁用 —— 「配置」页缺少：" + "、".join(missing))
+            _set_color(self.agent_status, STATUS_COLORS["error"])
+            self.agent_model_label.setText("")
 
     def update_from_state(self, snap: dict) -> None:
         pending = snap.get("pending") or {}
@@ -1483,6 +1684,7 @@ class MainWindow(QMainWindow):
             "loop_interval": grab["loop_interval"],
             "proxy": cfg["proxy"],
             "tasks": grab["tasks"],
+            "llm": cfg.get("llm") or {},
         }
 
     def _save(self) -> bool:
@@ -1582,6 +1784,8 @@ class MainWindow(QMainWindow):
         snap = state.get_state()
         self.grab_page.refresh(snap)
         self.course_page.update_from_state(snap)
+        llm_cfg = self.config_page.llm_values()
+        self.course_page.set_agent_config(llm_cfg["base_url"], llm_cfg["api_key"], llm_cfg["model"])
 
         # 已登录：文案改为「已登录」并一直置灰（不允许重复登录）
         logged_in = bool(self.session.get("query"))

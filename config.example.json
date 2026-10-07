@@ -1,7 +1,7 @@
 {
   "username": "你的学号",
   "password": "你的密码",
-  "term_id": 86,
+  "term_id": 88,
   "active_mode": "FQTS",
   "loop_interval": 1.0,
   "proxy": {
@@ -19,5 +19,10 @@
       "del_class_no": "",
       "del_raw_id": ""
     }
-  ]
+  ],
+  "llm": {
+    "base_url": "https://api.example.com",
+    "api_key": "sk-你的密钥",
+    "model": "模型名称"
+  }
 }
