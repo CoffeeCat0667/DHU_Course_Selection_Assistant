@@ -8,32 +8,51 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 无头模式：登录时不再弹出 Edge 窗口。若学校 CAS 拒绝无头访问，把它改成 False 即可。
+HEADLESS = True
 
-def login(username: str, password: str) -> tuple[dict, dict, dict]:
+
+def login(username: str, password: str, headless: bool | None = None) -> tuple[dict, dict, dict]:
+    if headless is None:
+        headless = HEADLESS
+
     opt = Options()
     for arg in ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-                '--start-maximized', '--blink-settings=imagesEnabled=false',
+                '--blink-settings=imagesEnabled=false',
                 '--disable-plugins', '--disable-extensions']:
         opt.add_argument(arg)
+    if headless:
+        opt.add_argument('--headless=new')
+        opt.add_argument('--window-size=1920,1080')
+        opt.add_argument('--log-level=3')
+    else:
+        opt.add_argument('--start-maximized')
 
     svc = EdgeService()
     svc.service_args = ['--connect-timeout=3000', '--read-timeout=3000']
     driver = webdriver.Edge(options=opt, service=svc)
-    driver.set_page_load_timeout(100000)
+    try:
+        driver.set_page_load_timeout(100000)
 
-    driver.get('https://cas.dhu.edu.cn/identity/login?app=ehall')
-    wait = WebDriverWait(driver, 10)
-    wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[4]/button")))
-    driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[2]/div[1]/div/div[1]/div[2]/input').send_keys(username)
-    driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[2]/div[2]/div/div[1]/div[2]/input').send_keys(password)
-    driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[4]/button').click()
-    wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[1]/div/div[1]/div[2]/img")))
+        driver.get('https://cas.dhu.edu.cn/identity/login?app=ehall')
+        # CAS 是 SPA，登录表单要 10~15 秒才渲染出来；无头模式下更慢，超时给足。
+        wait = WebDriverWait(driver, 40)
+        wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[4]/button")))
+        driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[2]/div[1]/div/div[1]/div[2]/input').send_keys(username)
+        driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[2]/div[2]/div/div[1]/div[2]/input').send_keys(password)
+        driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[1]/div[2]/div[2]/div/div/div[4]/button').click()
+        wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[1]/div/div[1]/div[2]/img")))
 
-    driver.get('https://jwgl.dhu.edu.cn/dhu/casLogin')
-    wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div/div[1]/div/div[1]/span[3]/i")))
+        driver.get('https://jwgl.dhu.edu.cn/dhu/casLogin')
+        wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div/div[1]/div/div[1]/span[3]/i")))
 
-    cookies = {c['name']: c['value'] for c in driver.get_cookies()}
-    driver.quit()
+        cookies = {c['name']: c['value'] for c in driver.get_cookies()}
+    finally:
+        # 无论成功失败都必须关掉驱动，否则无头模式下会静默残留 Edge 进程
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     jsessionid = cookies.get('JSESSIONID', '')
     vjuid = cookies.get('cookie_vjuid_portal_login', '')

@@ -930,7 +930,7 @@ class PendingCoursesDialog(QDialog):
     """培养方案中应读但尚未修读的课程，按课程类别分组。"""
 
     def __init__(self, parent=None, pending: dict | None = None,
-                 selected_codes=None, fetcher=None) -> None:
+                 selected_codes=None, fetcher=None, submitter=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("应读未读课程")
         self.setModal(True)
@@ -938,6 +938,7 @@ class PendingCoursesDialog(QDialog):
         groups = pending.get("groups") or []
         selected_codes = {str(x) for x in (selected_codes or [])}
         self._fetcher = fetcher
+        self._submitter = submitter
         self._term_id = pending.get("term_id")
         self._semester_label = pending.get("semester_label", "")
         self._row_courses: dict = {}
@@ -1044,17 +1045,22 @@ class PendingCoursesDialog(QDialog):
             return
         finally:
             QApplication.restoreOverrideCursor()
-        CourseClassesDialog(self, course, classes, self._semester_label).exec()
+        CourseClassesDialog(self, course, classes, self._semester_label,
+                            self._submitter).exec()
 
 
 class CourseClassesDialog(QDialog):
     """某门课本学期的开课情况：所有教学班与上课时间；不开课时显示「无」。"""
 
     def __init__(self, parent=None, course: dict | None = None,
-                 classes: list | None = None, semester: str = "") -> None:
+                 classes: list | None = None, semester: str = "",
+                 submitter=None) -> None:
         super().__init__(parent)
         course = course or {}
         classes = classes or []
+        self._course = course
+        self._submitter = submitter
+        self._row_classes: dict = {}
         self.setWindowTitle("本学期开课情况")
         self.setModal(True)
 
@@ -1104,12 +1110,15 @@ class CourseClassesDialog(QDialog):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     table.setItem(r, col, item)
                 table.setRowHeight(r, max(30, 22 * max(1, len(slots))))
+                self._row_classes[r] = c
 
             for i, width in enumerate((95, 50, 90, 100, 85, 95, 130, 130)):
                 table.setColumnWidth(i, width)
             table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+            table.itemDoubleClicked.connect(self._on_double_click)
+            table.setToolTip("双击教学班发送选课请求")
             root.addWidget(table, 1)
-            root.addWidget(_hint(f"共 {len(classes)} 个教学班。"))
+            root.addWidget(_hint(f"共 {len(classes)} 个教学班。双击某个教学班即可发送选课请求。"))
 
         bar = QHBoxLayout()
         bar.addStretch(1)
@@ -1122,6 +1131,69 @@ class CourseClassesDialog(QDialog):
         root.addLayout(bar)
 
         self.resize(1000, 640)
+
+    def _on_double_click(self, item) -> None:
+        cls = self._row_classes.get(item.row())
+        if not cls:
+            return
+        if self._submitter is None:
+            QMessageBox.information(self, "提示", "尚未登录，请先点「开始运行」获取数据。")
+            return
+
+        class_no = str(cls.get("class_no", "")).strip()
+        if not class_no:
+            QMessageBox.warning(self, "无法选课", "该教学班缺少选课序号（cttId）。")
+            return
+
+        name = self._course.get("name", "")
+        code = self._course.get("code", "")
+        slots = cls.get("slots") or []
+        detail = "\n".join(
+            ("  " + " ".join(x for x in (s.get("weeks"), s.get("time"), s.get("room")) if x)).strip()
+            for s in slots
+        ) or "  （无固定时间）"
+
+        answer = QMessageBox.question(
+            self, "确认选课",
+            f"确定要提交选课请求吗？\n\n"
+            f"课程：{name}（{code}）\n"
+            f"教学班：{class_no}　序号 {cls.get('seq', '')}\n"
+            f"教师：{cls.get('teacher', '')}\n"
+            f"时间地点：\n{detail}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = self._submitter(class_no)
+        except Exception as exc:
+            QMessageBox.critical(self, "选课失败",
+                                 f"请求异常：{type(exc).__name__}: {exc}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if isinstance(result, dict) and result.get("success"):
+            QMessageBox.information(
+                self, "选课成功",
+                f"{name}（{code}）\n教学班 {class_no} 选课成功。")
+            return
+
+        reason = "未知原因（服务端未返回说明）"
+        if isinstance(result, dict):
+            for key in ("msg", "message", "errMsg", "error", "info"):
+                if result.get(key):
+                    reason = str(result[key])
+                    break
+            else:
+                reason = str(result)
+        elif result is not None:
+            reason = str(result)
+        QMessageBox.warning(self, "选课失败",
+                            f"课程：{name}（{code}）\n教学班：{class_no}\n\n原因：{reason}")
 
 
 # =============================================================================
@@ -1219,6 +1291,8 @@ class Worker(threading.Thread):
         except Exception as exc:
             state.push_log("error", f"获取已选课程失败：{exc}")
             state.update(selected={"status": "error", "error": f"{type(exc).__name__}: {exc}"})
+            # 会话可能已失效：清空，让界面解锁「开始运行」以便重新登录
+            self.session.clear()
         else:
             payload = p.parse_selected_courses(data, semester)
             payload["status"] = "ok"
@@ -1348,12 +1422,14 @@ class MainWindow(QMainWindow):
         self.save_btn = QPushButton("保存配置")
         self.run_btn = QPushButton("开始运行")
         self.run_btn.setStyleSheet(PRIMARY_BUTTON_QSS)
-        for btn, width in ((self.save_btn, 120), (self.run_btn, 160)):
+        self.relogin_btn = QPushButton("重新登录")
+        for btn, width in ((self.save_btn, 120), (self.relogin_btn, 120), (self.run_btn, 160)):
             btn.setMinimumHeight(38)
             btn.setMinimumWidth(width)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             bar_layout.addWidget(btn)
         self.save_btn.clicked.connect(self._save)
+        self.relogin_btn.clicked.connect(self._relogin)
         self.run_btn.clicked.connect(self._start_run)
         root.addWidget(bar)
         self.bar = bar
@@ -1473,7 +1549,9 @@ class MainWindow(QMainWindow):
             return
         selected = snap.get("selected") or {}
         codes = {str(c.get("code")) for c in (selected.get("courses") or [])}
-        PendingCoursesDialog(self, pending, codes, self._fetch_course_classes).exec()
+        PendingCoursesDialog(self, pending, codes,
+                             fetcher=self._fetch_course_classes,
+                             submitter=self._submit_class).exec()
 
     def _fetch_course_classes(self, course_code: str, term_id: int) -> list:
         """双击课程时调用：取该课程本学期的所有教学班与时间。"""
@@ -1483,17 +1561,33 @@ class MainWindow(QMainWindow):
         data = api.fetch_course_classes(course_code, term_id, headers)
         return p.parse_course_classes(data)
 
+    def _submit_class(self, class_no: str) -> dict:
+        """双击教学班时调用：发送选课请求（scSubmit）。"""
+        headers = self.session.get("submit")
+        if not headers:
+            raise RuntimeError("尚未登录，请先点「开始运行」获取数据。")
+        return api.submit(f"cttId={class_no}&needMaterial=false", headers)
+
     # ---------------- 状态刷新 ----------------
     def _tick(self) -> None:
         running = self.worker is not None and self.worker.is_alive()
-        if self.worker is not None and not running and self.worker.session.get("query"):
-            self.session = dict(self.worker.session)
+        if self.worker is not None:
+            if self.worker.session.get("query"):
+                # 运行中也要同步会话，这样登录一旦成功，界面立刻能反映「已登录」
+                self.session = dict(self.worker.session)
+            elif not running:
+                # 会话已失效（例如抓取失败后被清空），解锁以便重新登录
+                self.session = {}
 
         snap = state.get_state()
         self.grab_page.refresh(snap)
         self.course_page.update_from_state(snap)
 
-        self.run_btn.setEnabled(not running)
+        # 已登录：文案改为「已登录」并一直置灰（不允许重复登录）
+        logged_in = bool(self.session.get("query"))
+        self.run_btn.setText("已登录" if logged_in else "开始运行")
+        self.run_btn.setEnabled(not running and not logged_in)
+        self.relogin_btn.setEnabled(logged_in and not running)
         self.save_btn.setEnabled(not running)
         self.grab_page.start_btn.setEnabled(not running)
         self.grab_page.stop_btn.setEnabled(running)
@@ -1501,8 +1595,10 @@ class MainWindow(QMainWindow):
 
         if running:
             phase = "获取课程中" if (self.worker and self.worker.phase == "fetch") else "抢课运行中"
-            self.statusBar().showMessage(
-                f"{phase}…（{STATUS_LABELS.get(snap.get('status', ''), '')}）｜配置文件：{CONFIG_PATH}")
+            # 抓取阶段用户停留在「选课」页，看不到「抢课」页的日志，把最新一条显示到状态栏
+            logs = snap.get("logs") or []
+            latest = str(logs[-1].get("msg", "")) if logs else "正在登录…"
+            self.statusBar().showMessage(f"{phase}… {latest}　｜　{CONFIG_PATH}")
         elif snap.get("status") == "blocked":
             self.statusBar().showMessage(f"已阻塞：{snap.get('notify', '')}")
         else:
@@ -1515,6 +1611,15 @@ class MainWindow(QMainWindow):
     def _start_run(self) -> None:
         if self._busy() or not self._confirm_save_if_dirty():
             return
+        self.session = {}
+        self.tabs.setCurrentWidget(self.course_page)
+        self._launch("fetch")
+
+    def _relogin(self) -> None:
+        """丢弃当前登录会话，重新登录并刷新数据。"""
+        if self._busy() or not self._confirm_save_if_dirty():
+            return
+        state.push_log("info", "重新登录：已丢弃旧会话")
         self.session = {}
         self.tabs.setCurrentWidget(self.course_page)
         self._launch("fetch")
